@@ -1,36 +1,96 @@
-#include <LiquidCrystal.h>
 #include "dht.h"
+#include "SFE_BMP180.h"
 
-#define DHT11_PIN 8
+#include <SPI.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
 dht DHT;
 
-LiquidCrystal lcd(2, 3, 4, 5, 6, 7); // (RS, E, DB4, DB5, DB6, DB7)
+SFE_BMP180 pressure;
 
-// Символ градуса
-byte circle[8] = {
-  B01110,
-  B10001,
-  B10001,
-  B01110,
-  B00000,
-  B00000,
-  B00000,
-};
+#define DHT11_PIN 8
+#define pwmPin 5
 
-void setup() {
-  Serial.begin(115200);
-  // Размерность экрана
-  lcd.begin(16, 2);
-  // Создаём символ градуса
-  lcd.createChar(1, circle);
+int prevVal = LOW;
+long th, tl, h, l, ppm;
+
+#define OLED_MOSI   9
+#define OLED_CLK   10
+#define OLED_DC    11
+#define OLED_CS    12
+#define OLED_RESET 13
+Adafruit_SSD1306 display(OLED_MOSI, OLED_CLK, OLED_DC, OLED_RESET, OLED_CS);
+
+double getPressure(){
+    char status;
+    double T,P,p0,a;
+
+    status = pressure.startTemperature();
+    if (status != 0){
+        // ожидание замера температуры
+        delay(status);
+        status = pressure.getTemperature(T);
+        if (status != 0){
+            status = pressure.startPressure(3);
+            if (status != 0){
+                // ожидание замера давления
+                delay(status);
+                status = pressure.getPressure(P,T);
+                if (status != 0){
+                    return(P);
+                }
+            }
+        }
+    }
 }
 
-void loop() {
+double getTemperature(){
+    char status;
+    double T,P,p0,a;
+
+    status = pressure.startTemperature();
+    if (status != 0){
+        // ожидание замера температуры
+        delay(status);
+        status = pressure.getTemperature(T);
+        if (status != 0){
+            return T;
+        }
+    }
+}
+
+void setup()
+{
+  Serial.begin(9600);
+  pressure.begin();
+  pinMode(13, OUTPUT);
+  pinMode(pwmPin, INPUT);
+
+  display.begin(SSD1306_SWITCHCAPVCC);
+  display.display();
+  delay(2000);
+  display.clearDisplay();
+
+  ppm = 0;
+
+//  display.setTextSize(1);
+//  display.setTextColor(WHITE);
+//  display.setCursor(0,0);
+//  display.println("Hello, world!");
+//  display.display();
+}
+
+void loop()
+{
+  // READ DATA
   Serial.print("DHT11, \t");
   int chk = DHT.read11(DHT11_PIN);
-  switch (chk) {
+  switch (chk)
+  {
     case DHTLIB_OK:  
-		Serial.print("OK,\t"); 
+		Serial.print("OK,\t\n"); 
 		break;
     case DHTLIB_ERROR_CHECKSUM: 
 		Serial.print("Checksum error,\t"); 
@@ -52,18 +112,57 @@ void loop() {
 		break;
   }
 
-  // Выводим в СОМ-порт данные о влажности и температуре
-  Serial.print(DHT.humidity, 1);
-  Serial.print(",\t\t");
-  Serial.println(DHT.temperature, 1);
+  display.clearDisplay();
   
-  // Выводим данные о влажности и температуре на экран
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print(int(DHT.temperature));
-  lcd.print(" \1C, ");
-  lcd.print(int(DHT.humidity));
-  lcd.print("%");
+  // DISPLAY DATA
+  double P = getPressure();
+  double T = getTemperature();
+  
+  Serial.print("Humidity - ");
+  Serial.println(DHT.humidity);
+  displayData(0, 0, "Humidity: ", DHT.humidity, " %");
+  
+  Serial.print("Pressure - ");
+  Serial.println(P);
+  displayData(0, 8, "Pressure: ", P, " Pa");
+  
+  Serial.print("Temperature - ");
+  Serial.println(T);
+  displayData(0, 16, "Temperature: ", T, " C");
+
+  displayData(0, 24, "PPM: ", double(ppm), "");
+
+  long tt = millis();
+  int myVal = digitalRead(pwmPin);
+
+  //Если обнаружили изменение
+  if (myVal == HIGH) {
+    if (myVal != prevVal) {
+      h = tt;
+      tl = h - l;
+      prevVal = myVal;
+    }
+  }  else {
+    if (myVal != prevVal) {
+      l = tt;
+      th = l - h;
+      prevVal = myVal;
+      ppm = 5000 * (th - 2) / (th + tl - 4);
+      Serial.println("PPM = " + String(ppm));
+    }
+  }
+
+  Serial.println();
   
   delay(2000);
+}
+
+void displayData(int x, int y, char *text, double value, char *text1) {
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.setCursor(x,y);
+  display.print(text);
+  display.print(value);
+  display.print(text1);
+  display.display();
 }
